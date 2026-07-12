@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Jupyter
+.ipynb_checkpoints/
+
+# 模型
+*.pth
+*.pt
+*.ckpt
+*.bin
+*.pyc
+
+# 实验输出
+output/
+outputs/
+results/
+runs/
+logs/
+wandb/
+tool/
+
+# 系统
+.DS_Store
+.idea/
+.vscode/
+opts.yaml
+opts.yaml
