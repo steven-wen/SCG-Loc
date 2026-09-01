@@ -1,4 +1,4 @@
-# SCG-Loc
+# SCG-Loc: A Structure-Calibrated Geo-Localization Network for Pixel-Level UAV Localization
 
 [English](README.md)
 
