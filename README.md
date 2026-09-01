@@ -17,7 +17,7 @@ SCG-Loc is a cross-view geo-localization framework for matching UAV imagery with
 
 ```text
 UAV image       ── Shared MixFormer backbone ── DPFPN ──┐
-                                                        ├── DSPM ── Matching head ── Response map + offset
+                                                        ├── DSPM ── Matching head ── Response map
 Satellite image ── Shared MixFormer backbone ── DPFPN ──┘
 ```
 
