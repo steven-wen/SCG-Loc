@@ -4,6 +4,21 @@
 
 SCG-Loc is a cross-view geo-localization framework for matching UAV imagery with satellite imagery. Given a UAV query and a satellite image, the model predicts the query location on the satellite map and evaluates it with RDS, SDM, and meter-level accuracy metrics.
 
+## Table of Contents
+
+- [Highlights](#highlights)
+- [Architecture](#architecture)
+- [Installation](#installation)
+- [Data Preparation](#data-preparation)
+- [Usage](#usage)
+  - [Training and Testing](#training-and-testing)
+  - [Evaluation](#evaluation)
+  - [Result Aggregation](#result-aggregation)
+- [Project Structure](#project-structure)
+- [Outputs](#outputs)
+- [License](#license)
+
+
 ## Highlights
 
 - **DPFPN — Detail-Preserving Feature Pyramid Network.** Builds detail-aware multi-scale representations with three components:
@@ -40,17 +55,25 @@ python -m pip install -r requirements.txt
 
 ## Data Preparation
 
-You need to prepare the UL14 dataset and pre-trained weights in advance.
+This project uses the **UL14** dataset, following the same dataset setup as [DRL](https://github.com/Dmmm1997/DRL).
 
+- **UL14 dataset:** [Download from ModelScope](https://modelscope.cn/datasets/dmmm997/UL14/files)
+- **CvT-13 pre-trained weights:** [Download pre-trained weights](https://seunic-my.sharepoint.cn/:u:/g/personal/230238525_seu_edu_cn/EUnD6wdRZ3hKhefxpqBsdpIBqzxzFGN7mm2rL548QZXtZw?e=YvwDFJ)
+
+After downloading the dataset and pre-trained weights, update the corresponding paths in the configuration file:
+
+- `pretrain_path`
+- `train_dir`
+- `val_dir`
+- `test_dir`
 ## Usage
 
-### Training
+### Training and Testing
+
+Execute the following command to run the training and testing pipeline:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python train.py \
-  --config SCG-LOC.py \
-  --gpu_ids 0 \
-  --name scg_loc
+bash train_test_local.sh
 ```
 
 ### Evaluation
@@ -59,21 +82,13 @@ CUDA_VISIBLE_DEVICES=0 python train.py \
 CUDA_VISIBLE_DEVICES=0 python test_meter.py --config SCG-LOC.py
 ```
 
-### Result aggregation
+### Result Aggregation
 
 ```bash
 python evaluate_all.py \
   --info_file output/pred_GPS/GPS_pred_gt_filterR-33.json \
   --out_file output/result_files/
 ```
-
-### Train and evaluate
-
-```bash
-chmod +x train_test_local.sh
-./train_test_local.sh SCG-LOC.py
-```
-
 ## Project Structure
 
 ```text
