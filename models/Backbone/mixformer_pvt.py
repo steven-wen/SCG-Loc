@@ -297,7 +297,7 @@ class pvt_tiny(PyramidVisionTransformer):
             sr_ratios=[8, 4, 2, 1],
             drop_rate=0.0, drop_path_rate=0.1)
         # if pretrained:
-        #     self.load_param("/home/dmmm/VscodeProject/FPI/pretrain_model/pvt_tiny.pth")
+        #     self.load_param("pretrained/pvt_tiny.pth")
 
 
 class pvt_small(PyramidVisionTransformer):
@@ -313,7 +313,7 @@ class pvt_small(PyramidVisionTransformer):
             drop_rate=0.0, drop_path_rate=0.1)
 
         # if pretrained:
-        #     self.load_param("/home/dmmm/VscodeProject/FPI/pretrain_model/pvt_small.pth")
+        #     self.load_param("pretrained/pvt_small.pth")
 
 
 def get_mixformer_pvt(

@@ -1,10 +1,9 @@
-#config="MixCvT13_DPCGFPN128_outstride1nearest_CE_Balance_cr33.py"
-config="${1:-DPCG+dsk_0.84.py}"
+config="${1:-SCG-LOC.py}"
 
 set -e
 
 gpu_ids=0
-python_bin="/home/zbw/miniconda3/envs/zbw/bin/python"
+python_bin="${PYTHON_BIN:-python}"
 project_root="$(pwd)"
 config_base="$(basename "$config" .py)"
 timestamp="$(date +%Y%m%d_%H%M%S)"

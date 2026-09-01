@@ -1,5 +1,3 @@
-import sys
-sys.path.insert(0,"/home/dmmm/VscodeProject/FPI/")
 from torch import nn
 import torch.nn.functional as F
 import numpy as np

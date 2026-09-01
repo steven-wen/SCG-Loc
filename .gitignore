@@ -1,29 +1,71 @@
-# Python
+# Python cache and test artifacts
 __pycache__/
 *.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
 
-# Jupyter
-.ipynb_checkpoints/
+# Local environments and packaging artifacts
+.venv/
+venv/
+env/
+ENV/
+*.egg-info/
+build/
+dist/
 
-# 模型
+# IDE and operating-system files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+secrets/
+private/
+credentials/
+credentials*.json
+*token*.json
+opts.yaml
+configs/local/
+configs/*local*.py
+
+# Datasets and downloaded/pretrained model files
+/data/
+/dataset/
+/datasets_data/
+/pretrained/
+/pretrain_model/
+/weights/
 *.pth
 *.pt
 *.ckpt
 *.bin
-*.pyc
 
-# 实验输出
-output/
-outputs/
-results/
-runs/
-logs/
-wandb/
-tool/
+# Training artifacts and intermediate results
+/checkpoints/
+/outputs/
+/runs/
+/logs/
+/wandb/
+/heatout/
+/results/intermediate/
+/results/tmp/
 
-# 系统
-.DS_Store
-.idea/
-.vscode/
-opts.yaml
-opts.yaml
+# `test_meter.py` writes intermediate predictions below output/. Keep them
+# ignored, but allow the program-generated, paper-facing metric summaries.
+/output/*
+!/output/metric_RDS_SDM/
+!/output/metric_RDS_SDM/**
+!/output/result_files/
+!/output/result_files/**
+
+# Project source and shared configuration directories must remain trackable.
+# Do not add broad ignore rules for complete source directories.

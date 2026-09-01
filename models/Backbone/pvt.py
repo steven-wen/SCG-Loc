@@ -238,7 +238,7 @@ class pvt_tiny(PyramidVisionTransformer):
             qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[2, 2, 2, 2],
             sr_ratios=[8, 4, 2, 1], drop_rate=0.0, drop_path_rate=0.1)
         if pretrained:
-            self.load_param("/home/dmmm/VscodeProject/FPI/pretrain_model/pvt_tiny.pth")
+            self.load_param("pretrained/pvt_tiny.pth")
 
 
 
@@ -250,4 +250,4 @@ class pvt_small(PyramidVisionTransformer):
             sr_ratios=[8, 4, 2, 1], drop_rate=0.0, drop_path_rate=0.1)
         
         if pretrained:
-            self.load_param("/home/dmmm/VscodeProject/FPI/pretrain_model/pvt_small.pth")
+            self.load_param("pretrained/pvt_small.pth")

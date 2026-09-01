@@ -1,0 +1,11 @@
+# Install a CUDA-compatible PyTorch and torchvision build separately.
+# Install matching mmcv-full<2 and mmdet<3 builds separately as described in README.md.
+einops
+matplotlib
+numpy
+opencv-python
+Pillow
+PyYAML
+scipy
+timm
+tqdm

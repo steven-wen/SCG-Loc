@@ -109,7 +109,7 @@ if __name__ == '__main__':
 
     transform_train_list ={"satellite": transforms.Compose(transform_train_list),
                             "train":transforms.Compose(transform_train_list)}
-    datasets = Dataloader_University(root="/home/dmmm/University-Release/train",transforms=transform_train_list,names=['satellite','drone'])
+    datasets = Dataloader_University(root="data/University-Release/train",transforms=transform_train_list,names=['satellite','drone'])
     samper = Sampler_University(datasets,8)
     dataloader = DataLoader(datasets,batch_size=8,num_workers=0,sampler=samper,collate_fn=train_collate_fn)
     for data_s,data_d in dataloader:

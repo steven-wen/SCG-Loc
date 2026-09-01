@@ -15,7 +15,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 parser = argparse.ArgumentParser(description='Training')
 import math
 
-parser.add_argument('--data_dir',default='/home/dmmm/University-Release/test',type=str, help='./test_data')
+parser.add_argument('--data_dir', default='data/University-Release/test', type=str, help='test data directory')
 parser.add_argument('--name', default='from_transreid_256_4B_small_lr005_kl', type=str, help='save model path')
 parser.add_argument('--batchsize', default=1, type=int, help='batchsize')
 parser.add_argument('--checkpoint',default="net_119.pth", help='weights' )
