@@ -57,8 +57,8 @@ python -m pip install -r requirements.txt
 
 This project uses the **UL14** dataset, following the same dataset setup as [DRL](https://github.com/Dmmm1997/DRL).
 
-- **UL14 dataset:** [Download from ModelScope](https://modelscope.cn/datasets/dmmm997/UL14/files)
-- **CvT-13 pre-trained weights:** [Download pre-trained weights](https://seunic-my.sharepoint.cn/:u:/g/personal/230238525_seu_edu_cn/EUnD6wdRZ3hKhefxpqBsdpIBqzxzFGN7mm2rL548QZXtZw?e=YvwDFJ)
+- **UL14 dataset:** [Link](https://modelscope.cn/datasets/dmmm997/UL14/files)
+- **CvT-13 pre-trained weights:** [Link](https://seunic-my.sharepoint.cn/:u:/g/personal/230238525_seu_edu_cn/EUnD6wdRZ3hKhefxpqBsdpIBqzxzFGN7mm2rL548QZXtZw?e=YvwDFJ)
 
 After downloading the dataset and pre-trained weights, update the corresponding paths in the configuration file:
 
