@@ -8,9 +8,9 @@ model = dict(
         output_index=[0, 1, 2]
     ),
     neck=dict(
-        type="DetailPreservingContextGatedFPN_I3",
+        type="DPFPN",
         output_dims=128,
-        context_hidden_ratio=4,
+        rfa_hidden_ratio=4,
         fusion_hidden_ratio=4,
         detail_hidden_ratio=4,
         gate_bias=2.0,
@@ -22,7 +22,7 @@ model = dict(
         input_ndim=128,
         mid_process_channels=[64, 16, 1]
     ),
-    dynamic_structural_keycentroid_gate=dict(
+    dspm=dict(
         enable=True,
         channels=128,
         match_dim=96,         ######### 64

@@ -3,7 +3,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class ResidualContextMixer(nn.Module):
+class ReceptiveFieldAggregation(nn.Module):
+    """Aggregate local, dilated, and global receptive-field context."""
+
     def __init__(self, channels, hidden_ratio=4):
         super().__init__()
         hidden_dim = max(channels // max(hidden_ratio, 1), 32)
@@ -46,7 +48,9 @@ class ResidualContextMixer(nn.Module):
         return x + delta
 
 
-class AdaptiveTopDownGate(nn.Module):
+class FusionGate(nn.Module):
+    """Adaptively fuse lateral and top-down pyramid features."""
+
     def __init__(self, channels, hidden_ratio=4, gate_bias=2.0):
         super().__init__()
         hidden_dim = max(channels // max(hidden_ratio, 1), 32)
@@ -79,11 +83,15 @@ class AdaptiveTopDownGate(nn.Module):
             dim=1,
         )
         hidden = self.encoder(interaction)
-        gate = torch.sigmoid(self.channel_gate(hidden)) * torch.sigmoid(self.spatial_gate(hidden))
+        gate = torch.sigmoid(self.channel_gate(hidden)) * torch.sigmoid(
+            self.spatial_gate(hidden)
+        )
         return lateral + gate * topdown
 
 
 class DetailResidualExtractor(nn.Module):
+    """Extract and inject gated fine-grained residual details."""
+
     def __init__(self, channels, hidden_ratio=4):
         super().__init__()
         hidden_dim = max(channels // max(hidden_ratio, 1), 32)
@@ -130,7 +138,14 @@ class ResidualRefineBlock(nn.Module):
     def __init__(self, channels):
         super().__init__()
         self.block = nn.Sequential(
-            nn.Conv2d(channels, channels, kernel_size=3, padding=1, groups=channels, bias=False),
+            nn.Conv2d(
+                channels,
+                channels,
+                kernel_size=3,
+                padding=1,
+                groups=channels,
+                bias=False,
+            ),
             nn.GELU(),
             nn.Conv2d(channels, channels, kernel_size=1, bias=True),
         )
@@ -142,12 +157,18 @@ class ResidualRefineBlock(nn.Module):
         return x + self.block(x)
 
 
-class DetailPreservingContextGatedFPN_I3(nn.Module):
+class DPFPN(nn.Module):
+    """Detail-Preserving Feature Pyramid Network.
+
+    DPFPN combines Receptive Field Aggregation, Fusion Gates, and a Detail
+    Residual Extractor to build detail-aware multi-scale features.
+    """
+
     def __init__(
         self,
         input_dims,
         output_dims=128,
-        context_hidden_ratio=4,
+        rfa_hidden_ratio=4,
         fusion_hidden_ratio=4,
         detail_hidden_ratio=4,
         gate_bias=2.0,
@@ -160,21 +181,21 @@ class DetailPreservingContextGatedFPN_I3(nn.Module):
         self.l4 = nn.Conv2d(c4_size, output_dims, kernel_size=1, stride=1, padding=0)
         self.l5 = nn.Conv2d(c5_size, output_dims, kernel_size=1, stride=1, padding=0)
 
-        self.c5_context = ResidualContextMixer(
+        self.receptive_field_aggregation = ReceptiveFieldAggregation(
             output_dims,
-            hidden_ratio=context_hidden_ratio,
+            hidden_ratio=rfa_hidden_ratio,
         )
-        self.fuse_p4 = AdaptiveTopDownGate(
-            output_dims,
-            hidden_ratio=fusion_hidden_ratio,
-            gate_bias=gate_bias,
-        )
-        self.fuse_p3 = AdaptiveTopDownGate(
+        self.p4_fusion_gate = FusionGate(
             output_dims,
             hidden_ratio=fusion_hidden_ratio,
             gate_bias=gate_bias,
         )
-        self.p3_detail = DetailResidualExtractor(
+        self.p3_fusion_gate = FusionGate(
+            output_dims,
+            hidden_ratio=fusion_hidden_ratio,
+            gate_bias=gate_bias,
+        )
+        self.detail_residual_extractor = DetailResidualExtractor(
             output_dims,
             hidden_ratio=detail_hidden_ratio,
         )
@@ -191,14 +212,14 @@ class DetailPreservingContextGatedFPN_I3(nn.Module):
         l4 = self.l4(c4)
         l5 = self.l5(c5)
 
-        p5_inner = self.c5_context(l5)
+        p5_inner = self.receptive_field_aggregation(l5)
         p5 = self.p5_out(p5_inner)
 
-        p4_inner = self.fuse_p4(l4, p5_inner)
+        p4_inner = self.p4_fusion_gate(l4, p5_inner)
         p4 = self.p4_out(p4_inner)
 
-        p3_inner = self.fuse_p3(l3, p4)
-        p3_inner = p3_inner + self.p3_detail(l3)
+        p3_inner = self.p3_fusion_gate(l3, p4)
+        p3_inner = p3_inner + self.detail_residual_extractor(l3)
         p3 = self.p3_out(p3_inner)
         p3 = self.p3_refine(p3)
 

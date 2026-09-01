@@ -3,7 +3,7 @@ from .pafpn import PAFPN
 from .fpn_mmlab import FPN
 from .channel_convert import CCN
 from .fpn import FPN_I3, FPN_I4
-from .detail_preserving_context_gated_fpn import DetailPreservingContextGatedFPN_I3
+from .dpfpn import DPFPN
 
 
 def make_neck(opt):
@@ -24,8 +24,8 @@ class Neck(nn.Module):
         if neck == "FPN_I3":
             # neck_model = FPN(opt.backbone_output_channel[:3],opt.neck_output_channel,len(opt.backbone_output_channel))
             neck_model = FPN_I3(**opt_neck)
-        elif neck == "DetailPreservingContextGatedFPN_I3":
-            neck_model = DetailPreservingContextGatedFPN_I3(**opt_neck)
+        elif neck == "DPFPN":
+            neck_model = DPFPN(**opt_neck)
         elif neck == "FPN_I4":
             neck_model = FPN_I4(**opt_neck)
         elif neck == "FPN":

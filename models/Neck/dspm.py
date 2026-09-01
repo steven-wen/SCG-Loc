@@ -16,7 +16,13 @@ class ConvGNGELU(nn.Module):
         out_channels = int(out_channels or in_channels)
         padding = kernel_size // 2
         self.block = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, padding=padding, bias=False),
+            nn.Conv2d(
+                in_channels,
+                out_channels,
+                kernel_size=kernel_size,
+                padding=padding,
+                bias=False,
+            ),
             nn.GroupNorm(_valid_groups(out_channels, norm_groups), out_channels),
             nn.GELU(),
         )
@@ -25,12 +31,12 @@ class ConvGNGELU(nn.Module):
         return self.block(x)
 
 
-class DynamicStructuralKeyCentroidGate(nn.Module):
-    """UAV-guided structural verification gate for SAT P3.
+class DSPM(nn.Module):
+    """Dynamic Structural Prototype Matching.
 
-    UAV P5 is compressed into a 3x3 structural template. Each SAT P5
-    location is represented by its 3x3 neighborhood. Their layout-level
-    similarity creates a structural context that is distributed back to P3.
+    DSPM builds a structural prototype from the UAV feature pyramid, matches
+    it against local satellite structures, and injects the matched context
+    into high-resolution satellite features.
     """
 
     def __init__(
@@ -82,7 +88,11 @@ class DynamicStructuralKeyCentroidGate(nn.Module):
             min_weight=float(center_prior_min),
             power=float(center_prior_power),
         )
-        self.register_buffer("center_prior", center_prior_tensor.view(1, self.num_tokens, 1), persistent=False)
+        self.register_buffer(
+            "center_prior",
+            center_prior_tensor.view(1, self.num_tokens, 1),
+            persistent=False,
+        )
 
         self.uav_key = nn.Conv2d(channels, match_dim, kernel_size=1, bias=False)
         self.sat_key = nn.Conv2d(channels, match_dim, kernel_size=1, bias=False)
@@ -100,17 +110,42 @@ class DynamicStructuralKeyCentroidGate(nn.Module):
 
         hidden_channels = int(hidden_channels)
         self.context_refine = nn.Sequential(
-            ConvGNGELU(channels * 4 + 1, hidden_channels, kernel_size=1, norm_groups=norm_groups),
-            ConvGNGELU(hidden_channels, hidden_channels, kernel_size=3, norm_groups=norm_groups),
-            ConvGNGELU(hidden_channels, hidden_channels, kernel_size=3, norm_groups=norm_groups),
+            ConvGNGELU(
+                channels * 4 + 1,
+                hidden_channels,
+                kernel_size=1,
+                norm_groups=norm_groups,
+            ),
+            ConvGNGELU(
+                hidden_channels,
+                hidden_channels,
+                kernel_size=3,
+                norm_groups=norm_groups,
+            ),
+            ConvGNGELU(
+                hidden_channels,
+                hidden_channels,
+                kernel_size=3,
+                norm_groups=norm_groups,
+            ),
             nn.Conv2d(hidden_channels, channels, kernel_size=1, bias=True),
         )
         self.context_project = nn.Sequential(
-            ConvGNGELU(channels, hidden_channels, kernel_size=3, norm_groups=norm_groups),
+            ConvGNGELU(
+                channels,
+                hidden_channels,
+                kernel_size=3,
+                norm_groups=norm_groups,
+            ),
             nn.Conv2d(hidden_channels, channels, kernel_size=1, bias=True),
         )
         self.gate_project = nn.Sequential(
-            ConvGNGELU(channels * 2 + 1, hidden_channels, kernel_size=1, norm_groups=norm_groups),
+            ConvGNGELU(
+                channels * 2 + 1,
+                hidden_channels,
+                kernel_size=1,
+                norm_groups=norm_groups,
+            ),
             nn.Conv2d(hidden_channels, channels, kernel_size=1, bias=True),
         )
         nn.init.constant_(self.gate_project[-1].bias, float(gate_bias))
@@ -119,7 +154,7 @@ class DynamicStructuralKeyCentroidGate(nn.Module):
 
     def forward(self, sat_features, uav_features):
         if len(sat_features) < 3 or len(uav_features) < 3:
-            raise ValueError("DynamicStructuralKeyCentroidGate expects [P3, P4, P5] for SAT and UAV.")
+            raise ValueError("DSPM expects [P3, P4, P5] for SAT and UAV.")
 
         sat_p3, sat_p4, sat_p5 = sat_features[:3]
         uav_p5 = uav_features[2]
@@ -128,7 +163,10 @@ class DynamicStructuralKeyCentroidGate(nn.Module):
         uav_key_map = self.uav_key(uav_p5)
         sat_key_map = self.sat_key(sat_p5)
         uav_key_tokens = self._uav_tokens(uav_key_map)
-        uav_value_tokens = self._uav_tokens(self.uav_value(uav_p5), normalize=False)
+        uav_value_tokens = self._uav_tokens(
+            self.uav_value(uav_p5),
+            normalize=False,
+        )
         sat_key_tokens = self._satellite_tokens(sat_key_map)
 
         if self.center_prior_enabled and self.center_prior_on in ("value", "both"):
@@ -137,15 +175,26 @@ class DynamicStructuralKeyCentroidGate(nn.Module):
                 dtype=uav_value_tokens.dtype,
             )
 
-        pos = self.relative_mlp(self.relative_coords.to(device=sat_p5.device, dtype=sat_p5.dtype))
+        pos = self.relative_mlp(
+            self.relative_coords.to(device=sat_p5.device, dtype=sat_p5.dtype)
+        )
         uav_key_tokens = F.normalize(uav_key_tokens + pos.unsqueeze(0), dim=-1)
-        sat_key_tokens = F.normalize(sat_key_tokens + pos.view(1, 1, self.num_tokens, self.match_dim), dim=-1)
+        sat_key_tokens = F.normalize(
+            sat_key_tokens
+            + pos.view(1, 1, self.num_tokens, self.match_dim),
+            dim=-1,
+        )
 
-        logits = torch.einsum("blnd,bmd->blnm", sat_key_tokens, uav_key_tokens) / self.temperature
+        logits = (
+            torch.einsum("blnd,bmd->blnm", sat_key_tokens, uav_key_tokens)
+            / self.temperature
+        )
         if self.center_prior_enabled and self.center_prior_on in ("logits", "both"):
-            log_prior = self.center_prior.squeeze(-1).clamp_min(1e-6).log().to(
-                device=logits.device,
-                dtype=logits.dtype,
+            log_prior = (
+                self.center_prior.squeeze(-1)
+                .clamp_min(1e-6)
+                .log()
+                .to(device=logits.device, dtype=logits.dtype)
             )
             logits = logits + log_prior.view(1, 1, 1, self.num_tokens)
 
@@ -163,7 +212,11 @@ class DynamicStructuralKeyCentroidGate(nn.Module):
             score = (score + weight * query_score) / (1.0 + weight)
 
         matched_tokens = torch.einsum("blnm,bmc->blnc", attn, uav_value_tokens)
-        matched_context = matched_tokens.mean(dim=2).transpose(1, 2).reshape(batch_size, self.channels, sat_h5, sat_w5)
+        matched_context = (
+            matched_tokens.mean(dim=2)
+            .transpose(1, 2)
+            .reshape(batch_size, self.channels, sat_h5, sat_w5)
+        )
         score_map = score.reshape(batch_size, 1, sat_h5, sat_w5)
 
         p5_context = self.context_refine(
@@ -178,21 +231,51 @@ class DynamicStructuralKeyCentroidGate(nn.Module):
                 dim=1,
             )
         )
-        context3 = F.interpolate(p5_context, size=sat_p3.shape[-2:], mode="bilinear", align_corners=False)
-        score3 = F.interpolate(score_map, size=sat_p3.shape[-2:], mode="bilinear", align_corners=False)
+        context3 = F.interpolate(
+            p5_context,
+            size=sat_p3.shape[-2:],
+            mode="bilinear",
+            align_corners=False,
+        )
+        score3 = F.interpolate(
+            score_map,
+            size=sat_p3.shape[-2:],
+            mode="bilinear",
+            align_corners=False,
+        )
 
         context_feat = self.context_project(context3)
-        gate = torch.sigmoid(self.gate_project(torch.cat([sat_p3, context3, score3], dim=1)))
-        p3_final = sat_p3 + self.p3_update_scale * self.alpha * gate * context_feat
+        gate = torch.sigmoid(
+            self.gate_project(torch.cat([sat_p3, context3, score3], dim=1))
+        )
+        p3_final = (
+            sat_p3
+            + self.p3_update_scale * self.alpha * gate * context_feat
+        )
 
         output = list(sat_features)
         output[0] = p3_final
         if self.update_p4:
-            context4 = F.interpolate(p5_context, size=sat_p4.shape[-2:], mode="bilinear", align_corners=False)
-            score4 = F.interpolate(score_map, size=sat_p4.shape[-2:], mode="bilinear", align_corners=False)
+            context4 = F.interpolate(
+                p5_context,
+                size=sat_p4.shape[-2:],
+                mode="bilinear",
+                align_corners=False,
+            )
+            score4 = F.interpolate(
+                score_map,
+                size=sat_p4.shape[-2:],
+                mode="bilinear",
+                align_corners=False,
+            )
             context_feat4 = self.context_project(context4)
-            gate4 = torch.sigmoid(self.gate_project(torch.cat([sat_p4, context4, score4], dim=1)))
-            output[1] = sat_p4 + self.p4_update_scale * self.alpha * gate4 * context_feat4
+            gate4 = torch.sigmoid(
+                self.gate_project(torch.cat([sat_p4, context4, score4], dim=1))
+            )
+            output[1] = (
+                sat_p4
+                + self.p4_update_scale * self.alpha * gate4 * context_feat4
+            )
         return output
 
     @staticmethod
@@ -203,13 +286,18 @@ class DynamicStructuralKeyCentroidGate(nn.Module):
         center = (float(token_grid) - 1.0) / 2.0
         yy, xx = torch.meshgrid(coord, coord, indexing="ij")
         dist = torch.sqrt((yy - center).pow(2) + (xx - center).pow(2))
-        max_dist = torch.sqrt(torch.tensor(2.0 * center * center, dtype=torch.float32)).clamp_min(1e-6)
+        max_dist = torch.sqrt(
+            torch.tensor(2.0 * center * center, dtype=torch.float32)
+        ).clamp_min(1e-6)
         prior = (1.0 - dist / max_dist).clamp_min(0.0).pow(power)
         prior = min_weight + (1.0 - min_weight) * prior
         return prior.reshape(-1)
 
     def _uav_tokens(self, feature, normalize=True):
-        pooled = F.adaptive_avg_pool2d(feature, (self.token_grid, self.token_grid))
+        pooled = F.adaptive_avg_pool2d(
+            feature,
+            (self.token_grid, self.token_grid),
+        )
         tokens = pooled.flatten(2).transpose(1, 2)
         if normalize:
             tokens = F.normalize(tokens, dim=-1)
@@ -222,14 +310,25 @@ class DynamicStructuralKeyCentroidGate(nn.Module):
             kernel_size=self.token_grid,
             padding=self.token_grid // 2,
         )
-        tokens = unfolded.transpose(1, 2).reshape(batch_size, height * width, self.num_tokens, channels)
+        tokens = unfolded.transpose(1, 2).reshape(
+            batch_size,
+            height * width,
+            self.num_tokens,
+            channels,
+        )
         return tokens
 
     def _query_global_score(self, uav_key_map, sat_key_map):
         q_avg = F.adaptive_avg_pool2d(uav_key_map, 1).flatten(1)
         q_max = F.adaptive_max_pool2d(uav_key_map, 1).flatten(1)
-        query = F.normalize(q_avg + self.global_query_pool_alpha * q_max, dim=1)
-        sat_tokens = F.normalize(sat_key_map.flatten(2).transpose(1, 2), dim=-1)
+        query = F.normalize(
+            q_avg + self.global_query_pool_alpha * q_max,
+            dim=1,
+        )
+        sat_tokens = F.normalize(
+            sat_key_map.flatten(2).transpose(1, 2),
+            dim=-1,
+        )
         score = torch.einsum("bld,bd->bl", sat_tokens, query)
         score_min = score.amin(dim=1, keepdim=True)
         score_max = score.amax(dim=1, keepdim=True)

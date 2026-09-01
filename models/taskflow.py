@@ -2,7 +2,7 @@ import torch.nn as nn
 import numpy as np
 from .Backbone.backbone import make_backbone
 from .Neck.neck import make_neck
-from .Neck.dynamic_structural_keycentroid_gate import DynamicStructuralKeyCentroidGate
+from .Neck.dspm import DSPM
 from .Head.head import make_head
 from .PostProcess.postprocess import make_postprocess
 import time
@@ -29,29 +29,29 @@ class FPI(nn.Module):
         # neck init
         self.neck_uav = make_neck(opt)
         self.neck_satellite = make_neck(opt)
-        structural_gate_opt = opt.model.get("dynamic_structural_keycentroid_gate", {})
-        self.dynamic_structural_keycentroid_gate = None
-        if bool(structural_gate_opt.get("enable", False)):
-            self.dynamic_structural_keycentroid_gate = DynamicStructuralKeyCentroidGate(
-                channels=structural_gate_opt.get("channels", opt.model["neck"].get("output_dims", 128)),
-                match_dim=structural_gate_opt.get("match_dim", 64),
-                token_grid=structural_gate_opt.get("token_grid", 3),
-                hidden_channels=structural_gate_opt.get("hidden_channels", opt.model["neck"].get("output_dims", 128)),
-                norm_groups=structural_gate_opt.get("norm_groups", 32),
-                temperature=structural_gate_opt.get("temperature", 0.1),
-                dual_softmax=structural_gate_opt.get("dual_softmax", True),
-                gate_bias=structural_gate_opt.get("gate_bias", -1.0),
-                alpha_init=structural_gate_opt.get("alpha_init", 0.0),
-                center_prior=structural_gate_opt.get("center_prior", False),
-                center_prior_min=structural_gate_opt.get("center_prior_min", 0.5),
-                center_prior_power=structural_gate_opt.get("center_prior_power", 2.0),
-                center_prior_on=structural_gate_opt.get("center_prior_on", "value"),
-                global_query_score=structural_gate_opt.get("global_query_score", False),
-                global_query_score_weight=structural_gate_opt.get("global_query_score_weight", 0.5),
-                global_query_pool_alpha=structural_gate_opt.get("global_query_pool_alpha", 0.1),
-                p3_update_scale=structural_gate_opt.get("p3_update_scale", 1.0),
-                update_p4=structural_gate_opt.get("update_p4", False),
-                p4_update_scale=structural_gate_opt.get("p4_update_scale", 0.5),
+        dspm_opt = opt.model.get("dspm", {})
+        self.dspm = None
+        if bool(dspm_opt.get("enable", False)):
+            self.dspm = DSPM(
+                channels=dspm_opt.get("channels", opt.model["neck"].get("output_dims", 128)),
+                match_dim=dspm_opt.get("match_dim", 64),
+                token_grid=dspm_opt.get("token_grid", 3),
+                hidden_channels=dspm_opt.get("hidden_channels", opt.model["neck"].get("output_dims", 128)),
+                norm_groups=dspm_opt.get("norm_groups", 32),
+                temperature=dspm_opt.get("temperature", 0.1),
+                dual_softmax=dspm_opt.get("dual_softmax", True),
+                gate_bias=dspm_opt.get("gate_bias", -1.0),
+                alpha_init=dspm_opt.get("alpha_init", 0.0),
+                center_prior=dspm_opt.get("center_prior", False),
+                center_prior_min=dspm_opt.get("center_prior_min", 0.5),
+                center_prior_power=dspm_opt.get("center_prior_power", 2.0),
+                center_prior_on=dspm_opt.get("center_prior_on", "value"),
+                global_query_score=dspm_opt.get("global_query_score", False),
+                global_query_score_weight=dspm_opt.get("global_query_score_weight", 0.5),
+                global_query_pool_alpha=dspm_opt.get("global_query_pool_alpha", 0.1),
+                p3_update_scale=dspm_opt.get("p3_update_scale", 1.0),
+                update_p4=dspm_opt.get("update_p4", False),
+                p4_update_scale=dspm_opt.get("p4_update_scale", 0.5),
             )
         self.UAV_output_index = opt.model["neck"]["UAV_output_index"]
         self.Satellite_output_index = opt.model["neck"]["Satellite_ouput_index"]
@@ -77,8 +77,8 @@ class FPI(nn.Module):
         neck_z = [neck_z_multi[index] for index in self.UAV_output_index]
         guidance_features = z if getattr(self.neck_satellite, "requires_uav_guidance", False) else None
         neck_x_multi = self.neck_satellite(x, guidance_features=guidance_features)
-        if self.dynamic_structural_keycentroid_gate is not None:
-            neck_x_multi = self.dynamic_structural_keycentroid_gate(neck_x_multi, neck_z_multi)
+        if self.dspm is not None:
+            neck_x_multi = self.dspm(neck_x_multi, neck_z_multi)
         neck_x = neck_x_multi[self.Satellite_output_index]
         # head forward
         cls_out, reg_out = self.head(neck_z, neck_x)

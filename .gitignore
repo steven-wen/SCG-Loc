@@ -59,13 +59,11 @@ configs/*local*.py
 /results/intermediate/
 /results/tmp/
 
-# `test_meter.py` writes intermediate predictions below output/. Keep them
-# ignored, but allow the program-generated, paper-facing metric summaries.
-/output/*
-!/output/metric_RDS_SDM/
-!/output/metric_RDS_SDM/**
-!/output/result_files/
-!/output/result_files/**
+# Publish every artifact placed in the project-level output/ directory.
+# These rules are intentionally after the global model-weight patterns above,
+# so files such as output/net_best.pth can also be tracked when required.
+!/output/
+!/output/**
 
 # Project source and shared configuration directories must remain trackable.
 # Do not add broad ignore rules for complete source directories.
