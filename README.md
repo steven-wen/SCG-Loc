@@ -1,6 +1,6 @@
 # SCG-Loc
 
-[English](README.md) | [简体中文](README_zh-CN.md)
+[English](README.md)
 
 SCG-Loc is a cross-view geo-localization framework for matching UAV imagery with satellite imagery. Given a UAV query and a satellite image, the model predicts the query location on the satellite map and evaluates it with RDS, SDM, and meter-level accuracy metrics.
 
