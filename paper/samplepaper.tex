@@ -1,0 +1,714 @@
+% !TeX program = pdflatex
+\documentclass[runningheads]{llncs}
+
+\usepackage[T1]{fontenc}
+\usepackage{newtxtext}
+\usepackage[varvw]{newtxmath}
+\usepackage{amsmath,amsfonts}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{graphicx}
+\usepackage{placeins}
+\usepackage{cite}
+\usepackage[hidelinks]{hyperref}
+\graphicspath{{./}}
+
+\title{SCG-Loc: A Structure-Calibrated Geo-Localization Network for Pixel-Level UAV Localization}
+\titlerunning{SCG-Loc for Pixel-Level UAV Localization}
+\author{Bowen Zhang \and Cuiwei Liu \and Huaijun Qiu}
+\authorrunning{B. Zhang et al.}
+% TODO: Replace the empty institute below with the authors' affiliations,
+% addresses, and corresponding-author email before submission.
+\institute{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Pixel-level Unmanned Aerial Vehicle (UAV) localization predicts the UAV position through a dense response map over a georeferenced satellite search region. However, multiscale feature fusion may weaken localization-sensitive spatial details, while visually similar regions in satellite images can produce competing responses. To address these problems, we propose the Structure-Calibrated Geo-Localization Network (SCG-Loc). Its Detail-Preserving Feature Pyramid Network (DP-FPN) regulates top-down feature transfer through cross-level gates and supplements the low-level representation with a learned local residual. Dynamic Structural Prototype Matching (DSPM) constructs an ordered structural prototype from the UAV feature and matches it with the neighborhood around each satellite candidate using a shared positional prior. The resulting matched context and correspondence concentration are used to calibrate the low-level satellite feature before dense response prediction. On UL14, SCG-Loc achieves a relative distance score (RDS) of 85.69\% and meter-level accuracy (MA) scores of 35.98\% at 3~m and 59.69\% at 5~m. These results support the use of detail-preserving multiscale fusion and surrounding structural cues in SCG-Loc for pixel-level UAV localization.
+
+\keywords{Cross-view geo-localization \and pixel-level UAV localization \and dense response prediction \and multiscale feature fusion \and structural matching}
+\end{abstract}
+
+\section{Introduction}
+Unmanned Aerial Vehicles (UAVs) have been widely used in applications such as remote sensing, search and rescue, infrastructure inspection, and autonomous navigation \cite{shakhatreh2019uavsurvey,jarraya2025gnss}. Reliable operation in these scenarios requires continuous and accurate position estimates. However, in urban environments, Global Navigation Satellite System (GNSS) signals can be blocked or attenuated by surrounding buildings \cite{jarraya2025gnss}. These limitations motivate the use of Cross-View Geo-Localization (CVGL), a vision-based approach that estimates the UAV position by establishing visual correspondences between UAV images and georeferenced satellite images \cite{dai2022denseuav,dai2026drl}.
+
+CVGL methods for UAV localization generally follow two localization paradigms: image retrieval and dense response prediction. Retrieval-based methods \cite{dai2022denseuav,hu2019image,shi2019cvft,zhu2022transgeo,zheng2020university1652,xu2024uavvisloc} partition satellite images into georeferenced tiles and retrieve the tile whose global representation is most similar to that of the UAV image. The center of the retrieved tile is then used as the estimated UAV coordinate. Consequently, the localization granularity is inherently constrained by the spatial sampling interval of the satellite gallery. Although denser sampling \cite{dai2026drl} can reduce this discretization error, it requires a much denser gallery and consequently increases both feature-storage overhead and online matching cost. These limitations motivate dense response prediction methods that directly predict the UAV position within the satellite image.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=.98\columnwidth]{motivation.pdf}
+\caption{Motivation for exploiting surrounding spatial structure. Similar local building patterns in the satellite image produce competing responses: the false candidate (cyan box and cross) generates an ambiguous peak, whereas the correct candidate (green box and star) corresponds to the ground truth. Their surrounding layouts differ, providing structural evidence that SCG-Loc uses to suppress the false peak and reinforce the correct one.}
+\label{fig:motivation}
+\end{figure}
+
+Unlike image retrieval, DRL \cite{dai2026drl} introduces an end-to-end dense response prediction paradigm for pixel-level UAV localization. Given a satellite search region determined by prior location information, the UAV and satellite images are jointly processed for cross-view feature interaction, and multiscale satellite features are fused to generate a dense response map whose peak indicates the predicted UAV coordinates. Following DRL, subsequent methods \cite{wang2023wamf,chen2024osfpi,kisieliute2026murde} have primarily focused on enhancing cross-view interaction and multiscale feature fusion. Despite these advances, accurate localization still faces two challenges: spatial detail degradation during multiscale feature fusion and response ambiguity caused by local structural similarity in satellite images.
+
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=.98\textwidth]{fig1.pdf}
+\caption{Overall architecture of SCG-Loc. The framework consists of a MixFormer-CvT backbone, DP-FPN, DSPM, and a localization head for dense UAV position prediction.}
+\label{fig:overall_framework}
+\end{figure}
+
+High-level features contain richer semantic information, while low-level features preserve finer spatial details that are important for accurate localization. Effective multiscale feature fusion therefore needs to incorporate high-level semantics without weakening localization-sensitive spatial details. However, direct fusion may transfer semantic information without explicitly accounting for the spatial details preserved in low-level features. As a result, these details may be weakened during feature fusion, which can broaden or shift the response peak and reduce localization accuracy.
+
+In addition, satellite images may contain multiple local structures that are visually similar to the UAV query, resulting in competing peaks in the response map and increased localization ambiguity. As illustrated in Fig.~\ref{fig:motivation}, although these candidate regions may exhibit similar local appearances, their surrounding spatial structures can differ substantially. This observation suggests that the surrounding spatial context can provide additional evidence for resolving such ambiguity. Based on these considerations, we propose the Structure-Calibrated Geo-Localization Network (SCG-Loc) with two complementary components. The Detail-Preserving Feature Pyramid Network (DP-FPN) refines multiscale satellite features by regulating semantic propagation across feature levels and retaining spatial details during pyramid fusion. Dynamic Structural Prototype Matching (DSPM) then constructs an ordered structural prototype from the UAV feature and evaluates its correspondence with the neighborhood around each satellite candidate. The resulting structural evidence is used to calibrate the low-level satellite feature before dense response prediction.
+
+The main contributions of this paper are summarized as follows:
+
+\begin{itemize}
+\item We propose SCG-Loc, a unified dense response prediction framework for pixel-level UAV localization that addresses spatial detail degradation during multiscale feature fusion and localization ambiguity caused by visually similar regions in satellite images.
+\item We develop DP-FPN to regulate semantic propagation across feature levels while retaining localization-sensitive spatial details, providing a refined multiscale satellite representation for precise localization.
+\item We introduce DSPM, which models the spatial arrangement of the UAV query representation and candidate neighborhoods through an ordered structural prototype and uses the resulting structural evidence to calibrate the low-level satellite feature.
+\end{itemize}
+
+\section{Related Work}
+
+\subsection{Image-Retrieval-Based Cross-View Geo-Localization}
+
+Retrieval-based cross-view geo-localization estimates a query location by matching a UAV observation against a georeferenced satellite gallery. Because UAV and satellite images differ substantially in viewpoint, scale, appearance, and ground coverage, a central objective is to learn geographically discriminative representations that remain robust to cross-view variations~\cite{durgam2024survey}. Existing approaches can be broadly grouped by the spatial granularity of their matching evidence into global representation learning and local or region-aware matching. The former emphasizes scene-level consistency through compact descriptors, whereas the latter retains spatially resolved evidence for finer cross-view correspondence. However, retrieval-based localization is inherently constrained by the spatial sampling density of the satellite gallery, which limits its granularity for precise coordinate estimation.
+
+Global representation learning maps UAV and satellite observations into a shared embedding space, enabling efficient retrieval through compact image-level descriptors. Early methods mainly relied on convolutional feature aggregation, while subsequent studies introduced Transformer-based context modeling and more structured embedding objectives to improve cross-view invariance and geographic discrimination~\cite{hu2019image,shi2019cvft,zhu2022transgeo,deuser2023sample4geo,yang2026ecsnet,zhang2026dycl}. Distribution alignment and robust representation learning further reduce sensitivity to cross-view and environmental variations~\cite{liu2023pvda,liu2025eagle,wen2026fanet,meng2026tbn}, while self-supervised and unsupervised formulations relax the dependence on paired annotations~\cite{chen2026dmnil,amadei2026caevl,chen2026uniabg}. However, compact image-level descriptors do not explicitly preserve spatially resolved correspondence, making them less directly suited to fine-grained position estimation.
+
+Local and region-aware methods address this limitation by preserving spatially resolved features and establishing correspondence at the part, region, or token level. Spatial partitioning and region alignment retain discriminative local patterns that may be obscured by global aggregation~\cite{wang2022lpn,dai2022fsra}. Query-adaptive feature extraction and semantic aggregation further emphasize regions that are informative for cross-view matching~\cite{hu2025query,li2023asa,liu2024agel}, while fine-grained alignment regulates how local evidence contributes to the final representation~\cite{du2026fall,yan2026dfsa}. More recent approaches incorporate geometric, depth, or structural priors to model the spatial organization of cross-view scenes beyond local appearance alone~\cite{liu2026surfnet,sun2026depthgeoloc,zhang2026geo2}. Other studies account for partial overlap, correspondence noise, or field-of-view variation to improve matching under incomplete cross-view correspondence~\cite{ji2025game4loc,li2026paul,chen2026singeo}. In retrieval-oriented formulations, however, structural cues are primarily used to improve image- or region-level correspondence and ranking, rather than to explicitly discriminate among densely distributed spatial candidates within a single satellite search image. Dense response prediction therefore provides a complementary formulation in which cross-view correspondence is evaluated directly over spatial locations, offering a natural basis for exploiting localization-sensitive detail and candidate-specific spatial context during coordinate estimation.
+
+\subsection{Dense Response Prediction for Pixel-Level UAV Localization}
+
+DRL~\cite{dai2026drl} formulates pixel-level UAV localization as an end-to-end dense response prediction problem. Given a UAV query and a satellite search image, cross-view interaction produces query-conditioned satellite features, which are aggregated across scales to generate a spatial response map whose peak determines the predicted UAV position. DRL further introduces two feature-interaction strategies, Post-Fusion and Mix-Fusion. Post-Fusion extracts UAV and satellite features independently before cross-view fusion, whereas Mix-Fusion injects UAV--satellite interaction into intermediate backbone stages. The reported results show that Mix-Fusion is more effective than Post-Fusion, indicating that incorporating cross-view information during hierarchical feature extraction is beneficial~\cite{dai2026drl}.
+
+Following this principle, subsequent dense-response methods have mainly improved two stages of the localization pipeline: cross-view feature interaction and multiscale feature fusion~\cite{chen2024osfpi,kisieliute2026murde,fan2024sspt}. For cross-view feature interaction, existing studies coordinate the preservation of view-specific information with information exchange between views, allowing the UAV query to progressively guide satellite representations while reducing interference from unrelated content~\cite{chen2024osfpi,fan2024sspt}. When local appearance alone provides insufficient evidence, long-range dependencies or auxiliary modalities are further introduced to strengthen cross-view correspondence modeling~\cite{tian2025cmin,xu2026mmglt}. These designs improve the reliability of cross-view matching, but they are not specifically designed to resolve candidate-level ambiguity when multiple spatial locations within the same satellite search image exhibit similar local appearances.
+
+For multiscale feature fusion, the common objective is to combine the semantic information of high-level features with the finer spatial detail preserved by low-level features~\cite{lin2017fpn}. Existing methods adapt the contributions and spatial support of hierarchical features to accommodate scale variation and local geometric differences~\cite{wang2023wamf,he2024dcd,chen2025obtpn,ngo2025amcf}. More recent pyramid designs further incorporate deep feature enhancement, cross-level integration, and feature alignment to construct spatially discriminative localization representations~\cite{ju2025vrpt,kisieliute2026murde}. Nevertheless, in many hierarchical fusion schemes, the interaction between propagated high-level features and the receiving low-level representation is not explicitly modeled as part of the transfer process. Consequently, semantic propagation may introduce information that is not fully aligned with localization-sensitive low-level detail. Related fine-grained localization formulations have also explored coordinate regression, continuous geographic probability inference, and temporal information integration~\cite{deng2026ngc,sun2026cfire,kang2026pfirnet,mo2026star}, but their output formulations or input conditions differ from the single-query dense response prediction setting considered in this work.
+
+Taken together, these limitations motivate SCG-Loc, which combines detail-preserving cross-level fusion with candidate-specific structural calibration for dense UAV localization.
+
+\section{Method}
+
+\subsection{Structure-Calibrated Geo-Localization Network}
+
+As shown in Fig.~\ref{fig:overall_framework}, SCG-Loc is an end-to-end dense response prediction framework for pixel-level UAV localization, consisting of a MixFormer-CvT ~\cite{cui2022mixformer,wu2021cvt} cross-view backbone, DP-FPN, DSPM, and a localization head. Given a UAV query image $\mathbf{I}^{\mathrm{U}}$ and a georeferenced satellite search image $\mathbf{I}^{\mathrm{S}}$, we employ MixFormer-CvT~\cite{cui2022mixformer} as the backbone. The backbone contains three hierarchical CvT stages. Within each backbone stage, the UAV and satellite features are separately embedded into tokens, concatenated along the token dimension, and processed by the attention fusion blocks for cross-view interaction. The resulting tokens are then split into the UAV and satellite streams and reshaped into their respective spatial feature maps. The three stages produce hierarchical feature pairs $\{\mathbf{L}_{i}^{\mathrm{U}},\mathbf{L}_{i}^{\mathrm{S}}\}_{i=1}^{3}$, where superscripts $\mathrm{U}$ and $\mathrm{S}$ denote UAV and satellite features, and $i$ indexes the feature level from low to high.
+
+DP-FPN processes the satellite feature hierarchy $\{\mathbf{L}_{i}^{\mathrm{S}}\}_{i=1}^{3}$ to obtain $\mathbf{P}_{3}^{\mathrm{S}}$ for candidate discrimination and $\mathbf{P}_{1}^{\mathrm{S}}$ for precise localization. In parallel, RFA transforms $\mathbf{L}_{3}^{\mathrm{U}}$ into $\mathbf{P}_{3}^{\mathrm{U}}$, and DSPM uses $\mathbf{P}_{3}^{\mathrm{U}}$ to construct an ordered structural prototype. DSPM compares this prototype with a local neighborhood centered at each spatial location of $\mathbf{P}_{3}^{\mathrm{S}}$, where each location is regarded as a satellite candidate. The resulting candidate-specific structural evidence is then used to calibrate $\mathbf{P}_{1}^{\mathrm{S}}$, yielding the structure-calibrated localization feature $\bar{\mathbf{P}}_{1}^{\mathrm{S}}$. Finally, the localization head converts $\bar{\mathbf{P}}_{1}^{\mathrm{S}}$ into a single-channel response-logit map $Z$, from which the predicted UAV location $\hat{p}$ is obtained by selecting the maximum response.
+
+\subsection{Detail-Preserving Feature Pyramid Network}
+
+As shown in Fig.~\ref{fig:dpfpn_details}, DP-FPN processes the satellite feature hierarchy $\{\mathbf{L}_{i}^{\mathrm{S}}\}_{i=1}^{3}$ through RFA, FG, and DRE. RFA first produces $\mathbf{P}_{3}^{\mathrm{S}}$ from $\mathbf{L}_{3}^{\mathrm{S}}$. Rather than directly propagating $\mathbf{P}_{3}^{\mathrm{S}}$ to lower feature levels, FG regulates cross-level information transfer according to the relation between adjacent features, successively producing $\widetilde{\mathbf{P}}_{2}^{\mathrm{S}}$ and $\widetilde{\mathbf{P}}_{1}^{\mathrm{S}}$. DRE extracts complementary local detail from $\mathbf{L}_{1}^{\mathrm{S}}$ to obtain $\mathbf{D}_{1}^{\mathrm{S}}$ and further integrates $\mathbf{D}_{1}^{\mathrm{S}}$ with the FG output $\widetilde{\mathbf{P}}_{1}^{\mathrm{S}}$, producing the final localization representation $\mathbf{P}_{1}^{\mathrm{S}}$. For subsequent processing, the multiscale satellite features are represented as $\mathbf{L}_{i}^{\mathrm{S}}\in\mathbb{R}^{C\times H_i\times W_i}$, where $C$ denotes the common channel dimension and $H_i\times W_i$ denotes the spatial resolution at level $i$.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=.98\textwidth]{fig2.pdf}
+\caption{Architecture of DP-FPN, comprising RFA, FG, and DRE. DWConv and GAP denote depthwise convolution and global average pooling.}
+\label{fig:dpfpn_details}
+\end{figure}
+
+\subsubsection{Receptive Field Aggregation}
+
+RFA augments $\mathbf{L}_{3}^{\mathrm{S}}$ by aggregating information from multiple receptive fields:
+\begin{equation}
+\boldsymbol{\Delta}_{3}^{\mathrm{S}}
+=
+f_{\mathrm{r}}\!\left(
+\operatorname{Concat}\!\left[
+\mathbf{L}_{3}^{\mathrm{S}},
+f_{1}(\mathbf{L}_{3}^{\mathrm{S}}),
+f_{2}(\mathbf{L}_{3}^{\mathrm{S}}),
+f_{\mathrm{g}}(\mathbf{L}_{3}^{\mathrm{S}})
+\right]\right),
+\label{eq:rfa}
+\end{equation}
+where $f_{1}$ and $f_{2}$ denote $3\times3$ depthwise convolutions with dilation rates 1 and 2. $f_{\mathrm{g}}$ extracts global context through global average pooling, while $f_{\mathrm{r}}$ denotes the fusion projection. The residual $\boldsymbol{\Delta}_{3}^{\mathrm{S}} \in\mathbb{R}^{C\times H_3\times W_3}$ has the same size as $\mathbf{L}_{3}^{\mathrm{S}}$. RFA adds it to $\mathbf{L}_{3}^{\mathrm{S}}$ and applies the output projection:
+\begin{equation}
+\mathbf{P}_{3}^{\mathrm{S}}
+=
+f_{\mathrm{o}}\!\left(
+\mathbf{L}_{3}^{\mathrm{S}}+
+\boldsymbol{\Delta}_{3}^{\mathrm{S}}
+\right),
+\label{eq:rfa_output}
+\end{equation}
+where $f_{\mathrm{o}}$ represents the $3\times3$ output projection shown in Fig.~\ref{fig:dpfpn_details}.
+
+\subsubsection{Fusion Gate}
+
+FG controls top-down information transfer through complementary channel and spatial gates. The channel gate determines which propagated channels should be retained, while the spatial gate determines where the transferred information should be introduced. Taking $\mathbf{L}_{2}^{\mathrm{S}}$ as an example, FG resizes $\mathbf{P}_{3}^{\mathrm{S}}$ to the spatial size of $\mathbf{L}_{2}^{\mathrm{S}}$ to obtain $\mathbf{T}_{2}^{\mathrm{S}}$. It then constructs a cross-level relation representation by concatenating $\mathbf{L}_{2}^{\mathrm{S}}$, $\mathbf{T}_{2}^{\mathrm{S}}$, their absolute difference, and their elementwise product:
+\begin{equation}
+\mathbf{R}_{2}^{\mathrm{S}}
+=
+\operatorname{Concat}\!\left[
+\mathbf{L}_{2}^{\mathrm{S}},
+\mathbf{T}_{2}^{\mathrm{S}},
+\left|\mathbf{L}_{2}^{\mathrm{S}}-\mathbf{T}_{2}^{\mathrm{S}}\right|,
+\mathbf{L}_{2}^{\mathrm{S}}\odot\mathbf{T}_{2}^{\mathrm{S}}
+\right],
+\label{eq:fusion_relation}
+\end{equation}
+Thus, $\mathbf{R}_{2}^{\mathrm{S}} \in\mathbb{R}^{4C\times H_2\times W_2}$. Based on $\mathbf{R}_{2}^{\mathrm{S}}$, FG generates the transfer gate:
+\begin{equation}
+\mathbf{G}_{2}^{\mathrm{S}}
+=
+\sigma\!\left[
+f_{\mathrm{c}}\!\left(f_{\mathrm{e}}(\mathbf{R}_{2}^{\mathrm{S}})\right)
+\right]
+\odot
+\sigma\!\left[
+f_{\mathrm{s}}\!\left(f_{\mathrm{e}}(\mathbf{R}_{2}^{\mathrm{S}})\right)
+\right],
+\label{eq:fusion_gate}
+\end{equation}
+where $f_{\mathrm{e}}$ encodes the cross-level relation representation. The channel branch $f_{\mathrm{c}}$ predicts channel-wise transfer weights in $\mathbb{R}^{C\times1\times1}$, while the spatial branch $f_{\mathrm{s}}$ predicts spatial transfer weights in $\mathbb{R}^{1\times H_2\times W_2}$. Their product is broadcast to form $\mathbf{G}_{2}^{\mathrm{S}} \in\mathbb{R}^{C\times H_2\times W_2}$. FG then applies the transfer gate to $\mathbf{T}_{2}^{\mathrm{S}}$ and adds the gated feature to the lateral feature:
+\begin{equation}
+\widetilde{\mathbf{P}}_{2}^{\mathrm{S}}
+=
+\mathbf{L}_{2}^{\mathrm{S}}
++
+\mathbf{G}_{2}^{\mathrm{S}}
+\odot
+\mathbf{T}_{2}^{\mathrm{S}}.
+\label{eq:fusion_output}
+\end{equation}
+
+Thus, $\widetilde{\mathbf{P}}_{2}^{\mathrm{S}} \in\mathbb{R}^{C\times H_2\times W_2}$. FG applies the same operation to $\mathbf{L}_{1}^{\mathrm{S}}$. It resizes $\widetilde{\mathbf{P}}_{2}^{\mathrm{S}}$ to form $\mathbf{T}_{1}^{\mathrm{S}}$ and fuses the two features to obtain $\widetilde{\mathbf{P}}_{1}^{\mathrm{S}}$.
+
+\subsubsection{Detail Residual Extractor}
+
+Given $\mathbf{L}_{1}^{\mathrm{S}}$, DRE extracts complementary local patterns from different spatial ranges and adaptively reweights them along the channel dimension. The resulting local residual is formulated as
+\begin{equation}
+\begin{aligned}
+\mathbf{A}_{1}^{\mathrm{S}}
+&=
+\sigma\!\left(
+f_{\mathrm{a}}\!\left(
+\operatorname{GAP}(\mathbf{L}_{1}^{\mathrm{S}})
+\right)\right),\
+\mathbf{D}_{1}^{\mathrm{S}}
+=
+\mathbf{A}_{1}^{\mathrm{S}}
+\odot
+f_{\mathrm{d}}\!\left(
+\operatorname{Concat}\!\left[
+f_{3}(\mathbf{L}_{1}^{\mathrm{S}}),
+f_{5}(\mathbf{L}_{1}^{\mathrm{S}})
+\right]\right),
+\end{aligned}
+\label{eq:detail_residual}
+\end{equation}
+where $\mathbf{A}_{1}^{\mathrm{S}}\in\mathbb{R}^{C\times1\times1}$ and $\mathbf{D}_{1}^{\mathrm{S}}\in\mathbb{R}^{C\times H_1\times W_1}$. Here, $f_{3}$ denotes a $3\times3$ depthwise convolution and $f_{5}$ denotes a $5\times5$ depthwise convolution. $f_{\mathrm{a}}$ generates the channel weights, and $f_{\mathrm{d}}$ aggregates the two local representations. DRE then takes the extracted detail residual $\mathbf{D}_{1}^{\mathrm{S}}$ together with the FG output $\widetilde{\mathbf{P}}_{1}^{\mathrm{S}}$ and integrates them to produce the localization representation:
+\begin{equation}
+\mathbf{P}_{1}^{\mathrm{S}}
+=
+f_{\mathrm{int}}\!\left(
+\widetilde{\mathbf{P}}_{1}^{\mathrm{S}}
++
+\mathbf{D}_{1}^{\mathrm{S}}
+\right),
+\label{eq:dre_output}
+\end{equation}
+where $f_{\mathrm{int}}$ denotes DRE's internal integration operation.
+It first applies a $3\times3$ convolution. A lightweight residual branch then uses a $3\times3$ depthwise convolution, GELU, and a $1\times1$ projection. The output $\mathbf{P}_{1}^{\mathrm{S}}$ retains the size
+$C\times H_1\times W_1$.
+
+\subsection{Dynamic Structural Prototype Matching}
+
+As shown in Fig.~\ref{fig:dspm_details}, DSPM dynamically constructs an ordered structural prototype for each UAV query. Here, ``structural'' refers to the spatial arrangement of coarse UAV tokens rather than an explicit geometric graph. RFA first transforms $\mathbf{L}_{3}^{\mathrm{U}}$ into $\mathbf{P}_{3}^{\mathrm{U}}$. DSPM uses $\mathbf{P}_{3}^{\mathrm{U}}$ to construct the prototype, matches it with the neighborhood around each candidate in $\mathbf{P}_{3}^{\mathrm{S}}$, and transfers the resulting candidate-specific evidence to $\mathbf{P}_{1}^{\mathrm{S}}$ for structural calibration.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=.98\textwidth]{DSPM.pdf}
+\caption{Architecture of DSPM:
+(a) ordered structural prototype and candidate neighborhoods,
+(b) candidate structural matching, and
+(c) structural calibration.}
+\label{fig:dspm_details}
+\end{figure}
+
+\subsubsection{Ordered Structural Prototype and Candidate Neighborhoods}
+
+To construct the UAV structural prototype, DSPM first projects $\mathbf{P}_{3}^{\mathrm{U}}$ into a key feature map for correspondence estimation and a value feature map for content aggregation. Adaptive average pooling converts both maps into a fixed $g\times g$ grid. After flattening, the key map forms $\mathbf{K}^{\mathrm{U}}\in\mathbb{R}^{M\times d}$, while the value map forms $\mathbf{V}^{\mathrm{U}}\in\mathbb{R}^{M\times C}$, where $M=g^2$. For the satellite branch, DSPM projects $\mathbf{P}_{3}^{\mathrm{S}}$ into a key feature map. Each spatial location $n$ serves as a candidate center. DSPM extracts a local $g\times g$ neighborhood around $n$ and flattens it into $\mathbf{K}_{n}^{\mathrm{S}}\in\mathbb{R}^{M\times d}$.
+
+The ordered tokens must retain their relative positions during cross-view matching. We normalize the two-dimensional coordinates of the $g\times g$ grid and map them through a two-layer MLP to obtain a shared positional embedding $\mathbf{E}\in\mathbb{R}^{M\times d}$. DSPM adds the same positional embedding to the UAV key tokens and each satellite candidate neighborhood, providing both sides with a common spatial reference. It then applies $\ell_{2}$ normalization along the feature dimension:
+\begin{equation}
+\begin{aligned}
+\bar{\mathbf{K}}^{\mathrm{U}}
+&=
+\mathcal{N}_{2}\!\left(
+\mathbf{K}^{\mathrm{U}}+\mathbf{E}
+\right),\\
+\bar{\mathbf{K}}_{n}^{\mathrm{S}}
+&=
+\mathcal{N}_{2}\!\left(
+\mathbf{K}_{n}^{\mathrm{S}}+\mathbf{E}
+\right).
+\end{aligned}
+\label{eq:dspm_tokens}
+\end{equation}
+Here, $\mathcal{N}_{2}(\cdot)$ denotes $\ell_{2}$ normalization. Because the subsequent matching evaluates all $M^{2}$ token pairs, $\mathbf{E}$ acts as a soft spatial prior rather than enforcing same-index correspondence.
+
+\subsubsection{Candidate Structural Matching}
+
+For each satellite candidate $n$, DSPM compares the tokens in its neighborhood $\bar{\mathbf{K}}_{n}^{\mathrm{S}}$ with the ordered UAV key representation $\bar{\mathbf{K}}^{\mathrm{U}}$. DSPM computes their pairwise affinities as 
+\begin{equation}
+\mathbf{Q}_{n}
+=
+\frac{
+\bar{\mathbf{K}}_{n}^{\mathrm{S}}
+(\bar{\mathbf{K}}^{\mathrm{U}})^{\mathrm{T}}
+}{\tau}
+\in \mathbb{R}^{M\times M},
+\label{eq:dspm_affinity}
+\end{equation}
+where $\tau$ is the temperature parameter. Dual softmax~\cite{sun2021loftr} reinforces correspondences supported in both directions:
+\begin{equation}
+\mathbf{W}_{n}
+=
+\mathcal{N}_{\mathrm{r}}\!\left[
+\operatorname{softmax}_{j}(\mathbf{Q}_{n})
+\odot
+\operatorname{softmax}_{i}(\mathbf{Q}_{n})
+\right],
+\label{eq:dspm_matching}
+\end{equation}
+where $i$ and $j$ index the satellite and UAV tokens. The two softmax operations normalize the affinity matrix along the UAV- and satellite-token dimensions. Their elementwise product reweights affinities according to competition in both matching directions. $\mathcal{N}_{\mathrm{r}}(\cdot)$ then renormalizes each row to form a distribution over UAV tokens. The resulting $\mathbf{W}_{n}$ is the soft correspondence matrix for candidate $n$. The correspondence matrix is further summarized into two complementary forms of candidate-specific matching evidence:
+\begin{equation}
+\mathbf{c}_{n}
+=
+\frac{1}{M}
+\mathbf{1}^{\mathrm{T}}
+\mathbf{W}_{n}
+\mathbf{V}^{\mathrm{U}},
+\qquad
+s_{n}
+=
+\frac{1}{M}
+\sum_{i=1}^{M}
+\max_{j}
+(\mathbf{W}_{n})_{ij},
+\label{eq:dspm_evidence}
+\end{equation}
+where $\mathbf{1}\in\mathbb{R}^{M}$ denotes the all-ones vector. $\mathbf{c}_{n}\in\mathbb{R}^{C}$ aggregates the UAV content supported by the token correspondences, while $s_n$ measures the concentration of the row-wise token assignments.
+
+After all satellite candidates are evaluated, $\{\mathbf{c}_{n}\}$ and $\{s_n\}$ are rearranged according to their candidate locations to form the matched context map $\mathbf{C}_{3}^{\mathrm{m}}\in\mathbb{R}^{C\times H_{3}\times W_{3}}$ and the correspondence concentration map $\mathbf{S}_{3}^{\mathrm{m}}\in\mathbb{R}^{1\times H_{3}\times W_{3}}$. Here, $H_{3}$ and $W_{3}$ denote the spatial dimensions of $\mathbf{P}_{3}^{\mathrm{S}}$.
+
+\subsubsection{Structural Calibration}
+
+Structural calibration first integrates the matched context $\mathbf{C}_{3}^{\mathrm{m}}$ and correspondence concentration $\mathbf{S}_{3}^{\mathrm{m}}$ with $\mathbf{P}_{3}^{\mathrm{S}}$. Specifically,
+\begin{equation}
+\mathbf{H}_{3}^{\mathrm{S}}
+=
+f_{\mathrm{h}}\!\left(
+\operatorname{Concat}\!\left[
+\mathbf{P}_{3}^{\mathrm{S}},
+\mathbf{C}_{3}^{\mathrm{m}},
+\left|\mathbf{P}_{3}^{\mathrm{S}}-\mathbf{C}_{3}^{\mathrm{m}}\right|,
+\mathbf{P}_{3}^{\mathrm{S}}\odot\mathbf{C}_{3}^{\mathrm{m}},
+\mathbf{S}_{3}^{\mathrm{m}}
+\right]\right),
+\label{eq:dspm_evidence_fusion}
+\end{equation}
+where $f_{\mathrm{h}}$ denotes a convolutional fusion block followed by GroupNorm and GELU activation.
+
+The fused structural evidence $\mathbf{H}_{3}^{\mathrm{S}}$ and the concentration map $\mathbf{S}_{3}^{\mathrm{m}}$ are resized to the spatial resolution of $\mathbf{P}_{1}^{\mathrm{S}}$, yielding $\mathbf{H}_{1}^{\mathrm{S}}$ and $\mathbf{S}_{1}^{\mathrm{m}}$. They are then combined with $\mathbf{P}_{1}^{\mathrm{S}}$ to estimate the calibration gate:
+\begin{equation}
+\boldsymbol{\Gamma}_{1}^{\mathrm{S}}
+=
+\sigma\!\left(
+f_{\gamma}\!\left(
+\operatorname{Concat}\!\left[
+\mathbf{P}_{1}^{\mathrm{S}},
+\mathbf{H}_{1}^{\mathrm{S}},
+\mathbf{S}_{1}^{\mathrm{m}}
+\right]\right)
+\right),
+\label{eq:dspm_gate}
+\end{equation}
+where $f_{\gamma}$ denotes a learnable convolutional projection that predicts the calibration gate. Finally, the transferred structural evidence $\mathbf{H}_{1}^{\mathrm{S}}$ is introduced into $\mathbf{P}_{1}^{\mathrm{S}}$ through a gated residual update:
+\begin{equation}
+\bar{\mathbf{P}}_{1}^{\mathrm{S}}
+=
+\mathbf{P}_{1}^{\mathrm{S}}
++
+\alpha\,
+\boldsymbol{\Gamma}_{1}^{\mathrm{S}}
+\odot
+f_{\mathrm{p}}\!\left(\mathbf{H}_{1}^{\mathrm{S}}\right),
+\label{eq:dspm_calibration}
+\end{equation}
+where $f_{\mathrm{p}}$ maps the transferred structural evidence to the feature space of $\mathbf{P}_{1}^{\mathrm{S}}$, and $\alpha$ is a learnable scaling parameter controlling the overall calibration strength. The residual form retains $\mathbf{P}_{1}^{\mathrm{S}}$ as the base localization representation.
+
+\subsection{Localization Head}
+
+The localization head converts the structure-calibrated feature $\bar{\mathbf{P}}_{1}^{\mathrm{S}}$ into a single-channel response-logit map $Z \in \mathbb{R}^{H_1 \times W_1}$. At each spatial location, the 128-dimensional feature vector is processed by three shared channel projection layers, which reduce the channel dimension from 128 to 64, then to 16, and finally to 1. The spatial resolution is preserved throughout the projection process. At inference, the response peak gives the UAV location:
+
+\begin{equation}
+\hat{p}=\arg\max_{p}\sigma(Z_p),
+\label{eq:argmax}
+\end{equation}
+where the georeferenced coordinate associated with $\hat{p}$ is taken as the predicted UAV position.
+
+\subsection{Loss Function}
+
+The localization head produces a dense response-logit map $Z\in\mathbb{R}^{H_1\times W_1}$, where each spatial location represents a candidate UAV position in the satellite search image. Training therefore requires the response around the ground-truth location to be distinguished from the large number of background locations. Following the dense response supervision strategy of DRL~\cite{dai2026drl}, we employ a weighted balance loss (WBL), formulated as a class-balanced binary cross-entropy objective. The ground-truth UAV coordinate is first mapped to the spatial coordinate
+system of the response map. Rather than supervising only a single pixel,
+we define a local positive region centered at the ground-truth position.
+Specifically, the positive set $\mathcal{P}$ contains the pixels within a
+$33\times33$ neighborhood centered at the ground-truth location, while all
+remaining locations constitute the negative set $\mathcal{N}$. The positive
+region provides a spatial tolerance around the target and determines the
+extent of the high-response region to be learned, whereas the negative
+locations represent competing candidate positions that should be suppressed.
+
+\begin{equation}
+\mathcal{L}_{\mathrm{cls}}
+=
+-\frac{1}{1+\lambda_{\mathrm{neg}}}
+\left[
+\frac{1}{|\mathcal{P}|}
+\sum_{p\in\mathcal{P}}\log q_p
++
+\frac{\lambda_{\mathrm{neg}}}{|\mathcal{N}|}
+\sum_{p\in\mathcal{N}}\log(1-q_p)
+\right],
+\label{eq:classification_loss}
+\end{equation}
+where $|\mathcal{P}|$ and $|\mathcal{N}|$ denote the numbers of positive and negative spatial locations. $q_p=\sigma(Z_p)$ denotes the predicted response probability at spatial location $p$, and $\lambda_{\mathrm{neg}}$ controls the relative contribution of the negative responses. The first term encourages high responses within the neighborhood of the ground-truth position, whereas the second term penalizes responses at background locations. Normalizing the two terms by $|\mathcal{P}|$ and $|\mathcal{N}|$ prevents their contributions from being determined directly by the substantially different numbers of positive and negative locations. The factor $\lambda_{\mathrm{neg}}$ further adjusts the relative importance of suppressing negative responses, and the factor $1/(1+\lambda_{\mathrm{neg}})$ normalizes the overall class-level weighting. We set $\lambda_{\mathrm{neg}}=170$ in all experiments. 
+
+\FloatBarrier
+
+\section{Experiments}
+
+\subsection{Experimental Setup}
+
+\subsubsection{Datasets and Evaluation Metrics}
+
+We first evaluate SCG-Loc on the UL14 benchmark introduced in DRL~\cite{dai2026drl}. The training set contains 6,768 UAV--satellite pairs collected from ten universities. The test set contains 2,331 UAV queries from four other universities and 27,972 satellite search images constructed at 12 search scales. The UAV images were acquired at flight heights of 80, 90, and 100~m. Each sample provides the query center within a georeferenced satellite image.
+
+For cross-dataset adaptation, we construct a split from the public UAV-VisLoc dataset~\cite{xu2024uavvisloc}. We use Scenes 01--09, comprising 6,040 UAV images. After removing eight samples whose coordinates fall outside the valid satellite-map extent, we divide the remaining 6,032 queries chronologically within each site into 76.5\%, 8.5\%, and 15.0\% for training, validation, and testing, yielding 4,615, 512, and 905 queries, respectively. Because the satellite map of Scene 07 cannot support the unified 700--1,800-pixel search windows without extensive padding, we exclude its five test queries. The final test set therefore contains 900 queries from Scenes 01--06 and 08--09. We refer to this split as VisLoc hereafter. Dataset statistics are summarized in Table~\ref{tab:dataset_statistics}.
+
+\begin{table}[!t]
+\centering
+\caption{Dataset statistics for UL14 and VisLoc benchmark.}
+\label{tab:dataset_statistics}
+\scriptsize
+\renewcommand{\arraystretch}{1.08}
+\setlength{\tabcolsep}{2.0pt}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{ccccc}
+\hline\hline
+Dataset & Subset & UAV Queries & Satellite Searches & Sites \\
+\hline
+UL14 & Train & 6,768 & 6,768 & 10 \\
+UL14 & Test & 2,331 & 27,972 & 4 \\
+VisLoc & Train & 4,615 & 4,615 & 9 \\
+VisLoc & Val & 512 & 6,144 & 9 \\
+VisLoc & Test & 900 & 10,800 & 8 \\
+\hline\hline
+\end{tabular}}
+\end{table}
+
+We follow DRL~\cite{dai2026drl} and use meter-level accuracy ($\mathrm{MA}$) and relative distance score ($\mathrm{RDS}$) as the localization metrics:
+\begin{equation}
+\begin{aligned}
+\mathrm{MA@}K &= \frac{1}{N_t}\sum_{i=1}^{N_t}
+\mathbb{I}(e_i \leq K),\\
+\mathrm{RDS} &= \frac{1}{N_t}\sum_{i=1}^{N_t}
+\exp\!\left(-10\mathrm{RD}_i\right),
+\end{aligned}
+\label{eq:localization_metrics}
+\end{equation}
+where $e_i$ denotes the geographic localization error, $\mathrm{RD}_i$ is the normalized image-coordinate error defined in~\cite{dai2026drl}, and $N_t$ is the number of test samples. $\mathrm{MA@}K$ is the proportion of test samples with $e_i \leq K$, whereas $\mathrm{RDS}$ provides a continuous score based on normalized localization error, with larger errors receiving exponentially lower scores. Higher values indicate better localization performance for both metrics. For reporting, we multiply both MA and RDS by 100 and express them as percentages.
+
+\subsubsection{Implementation Details}
+
+We resize UAV and satellite images to $128\times128$ and $384\times384$, respectively. We use MixFormer-CvT-13 as the backbone and initialize it with ImageNet-22K pretrained weights. The three backbone stages have channel dimensions of 64, 192, and 384. Accordingly, the UAV feature hierarchy has spatial resolutions of $32\times32$, $16\times16$, and $8\times8$, while the corresponding satellite features have resolutions of $96\times96$, $48\times48$, and $24\times24$. DP-FPN projects all three feature levels to a common channel dimension of 128. For DSPM, we set the matching dimension $d$ to 96, the structural grid size $g$ to 3, and the temperature parameter $\tau$ to 0.01. We set the negative-response weight $\lambda_{\mathrm{neg}}$ in the WBL to 170.
+
+We train both SCG-Loc and the reproduced DRL baseline for 90 epochs using AdamW with a batch size of 8, a weight decay of $5\times10^{-4}$, and an initial learning rate of $1.2\times10^{-4}$. The learning rate follows a linear warmup for the first 800 iterations and then decays according to a cosine schedule. During evaluation on UL14, we test each UAV query over 12 satellite search-region sizes, with side lengths ranging from 700 to 1,800 pixels at intervals of 100 pixels. We resize each search region to $384\times384$ before inference. We conduct all experiments on a single NVIDIA GeForce RTX 4090D GPU.
+
+\subsection{Performance Comparison on UL14}
+
+We compare SCG-Loc with the reproduced DRL baseline, and summarize the results in Table~\ref{tab:comparison_ul14}. To ensure a controlled comparison, we reproduce DRL using the same data preprocessing, training schedule, and evaluation protocol as SCG-Loc. We also include the originally reported DRL result for reference.
+
+SCG-Loc outperforms the reproduced DRL across all evaluation metrics. RDS increases from 81.17\% to 85.69\%, while MA@3 and MA@5 increase from 27.39\% and 49.04\% to 35.98\% and 59.69\%, respectively. The improvement is most pronounced under the strictest MA@3 criterion. This larger gain under small distance thresholds indicates that SCG-Loc is particularly effective at fine-grained response-peak localization, which validates the effectiveness of preserving localization-sensitive details in DP-FPN and introducing candidate-specific structural evidence in DSPM. We analyze the respective contributions of DP-FPN and DSPM in Section~\ref{subsec:ablation}. SCG-Loc achieves these improvements with a 19.0\% increase in MACs and a 4.6\% increase in model parameters compared with the reproduced DRL.
+
+Table~\ref{tab:comparison_ul14} further compares SCG-Loc with existing pixel-level UAV localization methods under their reported settings. According to their primary technical focus, we group these methods into cross-view interaction and relation modeling~\cite{chen2024osfpi,fan2024sspt,tian2025cmin}, and multiscale representation and local feature enhancement~\cite{wang2023wamf,he2024dcd,ju2025vrpt,kisieliute2026murde,ngo2025amcf}.
+
+Among methods focusing on cross-view interaction and relation modeling, SSPT achieves an RDS of 82.20\% and an MA@3 of 27.30\%, while SCG-Loc reaches 85.69\% and 35.98\%, respectively. The larger difference under MA@3 shows that the advantage of SCG-Loc becomes more pronounced when stricter spatial precision is required. Existing interaction-based methods mainly strengthen cross-view correspondence during feature extraction. SCG-Loc further incorporates candidate-specific surrounding structural information through DSPM, which provides additional discrimination when local appearance alone is insufficient. Among methods focusing on multiscale representation and local feature enhancement, VRPT and MuRDE-FPN achieve RDS values of 84.70\% and 84.26\%, respectively, compared with 85.69\% for SCG-Loc. The difference becomes more pronounced under MA@3: VRPT and MuRDE-FPN achieve 30.70\% and 30.93\%, while SCG-Loc reaches 35.98\%. This result suggests that accurate response-peak localization requires not only effective multiscale representation but also the preservation of localization-sensitive spatial information during cross-level feature propagation, which is consistent with the design objective of DP-FPN.
+
+Overall, SCG-Loc achieves the best performance among the compared methods, with the largest improvements under strict meter-level criteria. These results demonstrate the complementary benefits of detail-preserving multiscale fusion and candidate-specific structural reasoning for precise dense UAV localization.
+
+
+\begin{table}[!t]
+\centering
+\caption{Performance comparison of different methods on UL14.}
+\label{tab:comparison_ul14}
+\scriptsize
+\renewcommand{\arraystretch}{1.08}
+\setlength{\tabcolsep}{4.2pt}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lcccccccc}
+\hline\hline
+Method & MACs (G) & Params (M) & RDS & MA@3 & MA@5 & MA@10 & MA@20 & MA@50 \\
+\hline
+DRL (reported) \cite{dai2026drl} & 15.44 & 20.63 & 75.80 & 13.10 & 29.80 & 62.50 & 83.70 & 91.20 \\
+WAMF-FPI \cite{wang2023wamf} & 13.32 & 48.50 & 65.33 & 12.50 & 26.99 & 52.63 & 69.73 & 77.24 \\
+OS-FPI \cite{chen2024osfpi} & 14.28 & 14.76 & 76.25 & 22.81 & 44.33 & 72.32 & 82.52 & 87.20 \\
+CMIN \cite{tian2025cmin} & 57.80 & 88.50 & 77.52 & 20.40 & 39.60 & 71.30 & 85.00 & -- \\
+DCD-FPI \cite{he2024dcd} & 11.54 & 13.96 & 77.15 & 25.09 & 47.03 & -- & 83.29 & -- \\
+SSPT \cite{fan2024sspt} & 7.23 & 21.47 & 82.20 & 27.30 & 49.00 & 77.60 & 87.60 & 91.10 \\
+VRPT \cite{ju2025vrpt} & 6.05 & 10.12 & 84.70 & 30.70 & 57.90 & 83.10 & 91.40 & 95.10 \\
+AMCF-Net \cite{ngo2025amcf} & -- & -- & 78.12 & 27.25 & 50.16 & 84.37 & 88.51 & -- \\
+MuRDE-FPN \cite{kisieliute2026murde} & 11.81 & 14.15 & 84.26 & 30.93 & 55.42 & -- & 93.06 & -- \\
+\hline
+DRL (reproduced) \cite{dai2026drl} & 15.44 & 20.63 & 81.17 & 27.39 & 49.04 & 78.43 & 88.76 & 92.71 \\
+SCG-Loc (Ours, 128/384) & 18.37 & 21.57 & \textbf{85.69} & \textbf{35.98} & \textbf{59.69} & \textbf{85.34} & \textbf{93.32} & \textbf{95.79} \\
+\hline\hline
+\end{tabular}
+}
+\end{table}
+
+\subsection{Search-Scale Analysis}
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\columnwidth]{ul14_drl_vs_scgloc_scale_ma_3_5_20.pdf}
+\caption{Localization performance of DRL and SCG-Loc under different satellite search scales on UL14.}
+\label{fig:sat_size_curves}
+\end{figure}
+
+Fig.~\ref{fig:sat_size_curves} compares DRL and SCG-Loc under different satellite search-region sizes. The reported size denotes the side length of the raw square satellite crop, ranging from 700 to 1,800 pixels at intervals of 100 pixels. Varying the search-region size therefore changes the geographic coverage observed by the model while keeping the network input resolution fixed. Localization accuracy is lower for the smallest search regions, where less surrounding spatial context is available. Accuracy first increases as the search region expands, but then gradually decreases at larger scales. Because we resize all crops to the same input resolution, increasing the geographic coverage reduces the effective spatial resolution and introduces additional potential distractors. Nevertheless, SCG-Loc consistently maintains higher MA@3, MA@5, and MA@20 than DRL across all evaluated scales, indicating that the performance improvement is not limited to a particular search-region size.
+
+\subsection{Ablation Studies}
+\label{subsec:ablation}
+
+\begin{table}[!t]
+\centering
+\caption{Ablation results of DP-FPN and DSPM on UL14.}
+\label{tab:ablation_unified}
+
+\scriptsize
+\renewcommand{\arraystretch}{1.10}
+\setlength{\tabcolsep}{2.6pt}
+
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{ccccccccccccccc}
+\hline\hline
+
+\multirow{3}{*}{Variant}
+& \multicolumn{5}{c}{Components}
+& \multicolumn{2}{c}{Complexity}
+& \multicolumn{7}{c}{Metrics (\%)} \\
+\cline{2-6}
+\cline{7-8}
+\cline{9-15}
+
+& \multirow{2}{*}{DRL}
+& \multicolumn{3}{c}{DP-FPN}
+& \multirow{2}{*}{DSPM}
+& \multirow{2}{*}{MACs (G)}
+& \multirow{2}{*}{Params (M)}
+& \multirow{2}{*}{RDS}
+& \multirow{2}{*}{MA@3}
+& \multirow{2}{*}{MA@5}
+& \multirow{2}{*}{MA@10}
+& \multirow{2}{*}{MA@20}
+& \multirow{2}{*}{MA@30}
+& \multirow{2}{*}{MA@50} \\
+\cline{3-5}
+
+& & RFA & FG & DRE & & & & & & & & & & \\
+\hline
+
+Baseline
+& $\surd$ & -- & -- & -- & --
+& 15.44 & 20.63
+& 81.17 & 27.39 & 49.04 & 78.43 & 88.76 & 90.72 & 92.71 \\
+
+Variant 1
+& $\surd$ & $\surd$ & -- & -- & --
+& 15.45 & 20.71
+& 81.31 & 29.93 & 52.84 & 79.60 & 88.12 & 89.92 & 92.20 \\
+
+Variant 2
+& $\surd$ & $\surd$ & $\surd$ & -- & --
+& 15.83 & 20.83
+& 81.16 & 30.18 & 52.86 & 79.50 & 88.08 & 89.62 & 91.79 \\
+
+Variant 3
+& $\surd$ & $\surd$ & $\surd$ & $\surd$ & --
+& 16.18 & 20.93
+& 83.20 & 31.37 & 54.29 & 82.33 & 90.75 & 92.22 & 94.19 \\
+
+Full Model
+& $\surd$ & $\surd$ & $\surd$ & $\surd$ & $\surd$
+& 18.37 & 21.57
+& \textbf{85.69} & \textbf{35.98} & \textbf{59.69}
+& \textbf{85.34} & \textbf{93.32} & \textbf{94.45} & \textbf{95.79} \\
+
+\hline\hline
+\end{tabular}%
+}
+\end{table}
+
+We conduct ablation studies to investigate the contributions of DP-FPN and DSPM. We construct three variants of SCG-Loc with different component configurations. Table~\ref{tab:ablation_unified} compares these variants with the reproduced DRL baseline and the full model. We first analyze DP-FPN through incremental ablation of its three key components: RFA, FG, and DRE. Starting from the reproduced DRL baseline, Variant~1 introduces RFA, Variant~2 further incorporates FG, and Variant~3 adds DRE to form the complete DP-FPN.
+
+As shown in Table~\ref{tab:ablation_unified}, the most evident improvements within DP-FPN occur after introducing RFA and DRE. RFA increases MA@3 from 27.39\% to 29.93\% and MA@5 from 49.04\% to 52.84\%, which is consistent with its role in aggregating information from multiple receptive fields. After FG is introduced, MA@3 further increases to 30.18\%, while the other metrics remain close to those of Variant~1. When DRE is further added, RDS increases from 81.16\% to 83.20\%, while MA@3 and MA@5 increase to 31.37\% and 54.29\%, respectively. This gain is consistent with DRE supplementing the fused representation with localization-sensitive low-level spatial detail. Overall, the complete DP-FPN improves both overall localization quality and fine-grained localization accuracy compared with the reproduced DRL baseline. After DSPM is introduced on top of the complete DP-FPN, the full model achieves the best performance across all reported metrics. RDS increases from 83.20\% to 85.69\%, while MA@3 and MA@5 increase from 31.37\% and 54.29\% to 35.98\% and 59.69\%, respectively. The larger improvement under strict meter-level criteria indicates that candidate-specific structural information provides additional discriminative evidence beyond multiscale feature refinement. This result supports the complementary roles of DP-FPN and DSPM in accurate response-peak localization.
+
+To further examine how DP-FPN and DSPM affect the localization response, Fig.~\ref{fig:qualitative_ablation} compares the response distributions and predicted locations of DRL, DRL+DP-FPN, and SCG-Loc on four representative UL14 examples. In Cases~1 and 2, DRL produces strong competing responses away from the ground-truth location, resulting in large localization errors. After introducing DP-FPN, the dominant responses move substantially closer to the target region. The localization errors decrease from 117.7~m to 3.2~m in Case~1 and from 56.8~m to 3.9~m in Case~2, which is consistent with DP-FPN producing a more spatially discriminative multiscale representation. In Case~2, adding DSPM further reduces the localization error from 3.9~m to 0.94~m, as the surrounding structural correspondence provides additional evidence for distinguishing the remaining competing candidates. In Case~1, DP-FPN already produces an accurate prediction, and the full model maintains a similar localization result.
+
+
+\begin{table}[!t]
+\centering
+\caption{Ablation results (\%) of matching strategies in DSPM on UL14.}
+\label{tab:dspm_matching}
+
+\scriptsize
+\renewcommand{\arraystretch}{1.08}
+\setlength{\tabcolsep}{4.2pt}
+
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lrrrrrrrr}
+\hline\hline
+Method & RDS & MA@3 & MA@5 & MA@10 & MA@20 & MA@30 & MA@50 & MA@100 \\
+\hline
+DSPM w/o Relative Position
+& 83.91 & 32.28 & 56.33 & 83.30 & 91.44 & 92.81 & 94.88 & 97.17 \\
+
+DSPM w/ Single Softmax
+& 83.07 & 31.85 & 55.19 & 82.07 & 90.39 & 92.02 & 93.95 & 96.54 \\
+
+Full DSPM
+& \textbf{85.69}
+& \textbf{35.98}
+& \textbf{59.69}
+& \textbf{85.34}
+& \textbf{93.32}
+& \textbf{94.45}
+& \textbf{95.79}
+& \textbf{97.45} \\
+\hline\hline
+\end{tabular}}
+\end{table}
+
+Cases~3 and 4 illustrate a different situation. In Case~3, all three methods identify the region around the ground-truth location, but their response peaks differ in localization precision. The localization error decreases from 20.0~m for DRL to 11.3~m after introducing DP-FPN and further to 5.4~m for SCG-Loc. Case~4 shows a similar trend, with the localization error decreasing from 26.8~m to 9.1~m and then to 6.8~m. These examples show that the proposed components not only help distinguish competing candidate regions but also improve response-peak localization when the correct region has already been identified.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\columnwidth]{abloation.pdf}
+\caption{Qualitative localization comparison of three methods on UL14. Cases 1 and 2 exhibit candidate ambiguity that leads to localization shifts, whereas Case 3 shows a shared dominant response region with different localization precision. Case 4 further shows improved localization precision after introducing the proposed components. The green star indicates the ground truth, and the model-specific markers indicate the predicted locations.}
+\label{fig:qualitative_ablation}
+\end{figure}
+
+Table~\ref{tab:dspm_matching} further analyzes two key designs within DSPM: the relative positional embedding and dual-softmax matching. Removing the relative positional embedding reduces RDS from 85.69\% to 83.91\%, while MA@3 and MA@5 decrease from 35.98\% and 59.69\% to 32.28\% and 56.33\%, respectively. The shared positional embedding provides the UAV structural prototype and each satellite candidate neighborhood with a common spatial reference, allowing the matching process to preserve the relative arrangement of local tokens. This performance decrease indicates that relative positional information is important for effective structural matching.
+
+Replacing dual softmax with a single softmax reduces RDS to 83.07\%, while MA@3 and MA@5 decrease to 31.85\% and 55.19\%, respectively. Dual softmax reweights token affinities through competition in both matching directions and emphasizes correspondences supported from both directions. The larger performance decrease under strict meter-level criteria suggests that bidirectional affinity reweighting is particularly important for fine-grained structural matching. With both relative positional information and dual-softmax matching enabled, the full DSPM achieves the best performance across all reported metrics.
+
+\subsection{Cross-Dataset Adaptation on VisLoc}
+We further evaluate cross-dataset adaptation by fine-tuning the UL14-trained DRL and SCG-Loc models for 30 epochs on the VisLoc training split. Table~\ref{tab:visloc_multiscene} summarizes their localization performance on the VisLoc test set.                       
+
+SCG-Loc consistently outperforms DRL on VisLoc. The overall RDS increases from 22.69\% to 25.98\%, while MA@50 increases from 29.20\% to 35.46\% and MA@100 from 53.22\% to 57.69\%. SCG-Loc improves over DRL in all eight test scenes, indicating that its gains are consistent across different scene conditions. Performance varies substantially across the eight test scenes. Scene~03 contains diverse land-cover types, including farmland, towns, urban areas, and rivers. SCG-Loc increases RDS from 29.70\% to 34.31\% and MA@50 from 41.88\% to 54.57\%, showing substantial improvement in this structurally diverse scene. Scene~08 yields the lowest performance for the reproduced DRL, with an RDS of 19.08\% and an MA@50 of 22.80\%. SCG-Loc improves these values to 22.92\% and 29.19\%, demonstrating that the performance gain is maintained even in the scene with the lowest baseline accuracy.
+
+\begin{table}[!t]
+\centering
+\caption{Per-site localization results (\%) on VisLoc.}
+\label{tab:visloc_multiscene}
+
+\scriptsize
+\renewcommand{\arraystretch}{1.08}
+\setlength{\tabcolsep}{2.2pt}
+
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{ccccccccc}
+\hline\hline
+
+\multirow{2}{*}{Site}
+& \multicolumn{2}{c}{RDS}
+& \multicolumn{2}{c}{MA@30}
+& \multicolumn{2}{c}{MA@50}
+& \multicolumn{2}{c}{MA@100} \\
+\cline{2-3}
+\cline{4-5}
+\cline{6-7}
+\cline{8-9}
+
+& DRL & SCG-Loc
+& DRL & SCG-Loc
+& DRL & SCG-Loc
+& DRL & SCG-Loc \\
+\hline
+
+01
+& 25.32 & \textbf{27.22}
+& 18.77 & \textbf{22.49}
+& 34.89 & \textbf{36.72}
+& 55.35 & \textbf{59.15} \\
+
+02
+& 20.74 & \textbf{24.13}
+& 13.30 & \textbf{18.74}
+& 25.67 & \textbf{31.52}
+& 50.16 & \textbf{52.74} \\
+
+03
+& 29.70 & \textbf{34.31}
+& 25.94 & \textbf{29.42}
+& 41.88 & \textbf{54.57}
+& 63.55 & \textbf{69.93} \\
+
+04
+& 22.53 & \textbf{25.74}
+& 13.18 & \textbf{14.55}
+& 28.56 & \textbf{33.03}
+& 58.48 & \textbf{64.09} \\
+
+05
+& 22.41 & \textbf{26.27}
+& 14.79 & \textbf{20.31}
+& 25.94 & \textbf{36.62}
+& 48.83 & \textbf{52.58} \\
+
+06
+& 23.58 & \textbf{25.67}
+& 18.67 & \textbf{21.33}
+& 31.67 & \textbf{35.33}
+& 52.17 & \textbf{54.17} \\
+
+08
+& 19.08 & \textbf{22.92}
+& 11.02 & \textbf{15.11}
+& 22.80 & \textbf{29.19}
+& 47.85 & \textbf{53.49} \\
+
+09
+& 20.40 & \textbf{23.23}
+& 11.52 & \textbf{14.71}
+& 25.58 & \textbf{30.65}
+& 50.29 & \textbf{55.00} \\
+
+\hline
+
+Overall
+& 22.69 & \textbf{25.98}
+& 15.44 & \textbf{19.23}
+& 29.20 & \textbf{35.46}
+& 53.22 & \textbf{57.69} \\
+
+\hline\hline
+\end{tabular}%
+}
+\end{table}
+
+
+\section{Conclusion}
+
+This paper presented SCG-Loc for pixel-level UAV localization, targeting two issues in dense response prediction: spatial-detail degradation during multiscale feature fusion and response ambiguity caused by visually similar satellite regions. DP-FPN regulates cross-level feature transfer and restores localization-sensitive local details, while DSPM uses the surrounding structural correspondence of satellite candidates to reduce ambiguity among competing response peaks. On UL14, SCG-Loc outperforms the reproduced DRL baseline and the compared published methods, with the largest gains under strict meter-level criteria. Ablation results confirm that both detail-preserving multiscale representation and candidate-specific structural matching contribute to accurate response-peak localization, and that relative positional information and dual-softmax matching are important for effective structural matching. It also generalizes across search scales and, after fine-tuning, to VisLoc.
+
+A limitation of this work is that DSPM introduces additional computation, and the current evaluation still relies on a predefined satellite search region. In addition, cross-dataset transfer is evaluated with target-domain fine-tuning rather than zero-shot generalization. Future work will extend SCG-Loc toward large-area localization, investigate cross-dataset generalization without target-domain fine-tuning, and further optimize the computational efficiency of structural matching.
+
+
+% Add the acknowledgments and competing-interests statement in a credits
+% environment here when the final author information is available.
+\bibliographystyle{splncs04}
+\bibliography{references}
+
+\end{document}
